@@ -39,7 +39,7 @@
 // Program Start
 int main(int argc, char **argv)
 {
-	int bytes_to_read;
+	int bytes_to_read, n;
 	int socket_desc;
 
 	struct hostent	*hp;
