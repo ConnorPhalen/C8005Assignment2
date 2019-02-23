@@ -27,21 +27,6 @@
 #include <pthread.h>
 #include "threadstack.h"
 
-//#define STACKLIMIT 10
-
-/*
-* Holds a stack pointers to a series of threads
-*
-struct ThreadStack
-{
-	pthread_t *stack[STACKLIMIT];	// array of thread pointers
-	int top; 						// current index of the top thread, starts at 0
-};*/
-
-/* pop 		- pops a thread off the stack
-*  Input 	- N/A
-*  Output	- Returns a pointer to a pthread_t, which will be assigned a client connection, or NULL if error
-*/
 pthread_t* pop(struct ThreadStack *tstack)
 {
 	pthread_t *threadp;

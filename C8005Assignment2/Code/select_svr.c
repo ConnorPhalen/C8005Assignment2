@@ -18,7 +18,7 @@
 --
 --	NOTES:
 --  FD_SETSIZE is restricted to 1024, so that is the select servers upper limit. Could extend it by making another higher variable?
---	Compile using this -> gcc -Wall -o sel_svr select_svr.c 
+--	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c 
 --  https://stackoverflow.com/questions/26753957/how-to-dynamically-allocateinitialize-a-pthread-array
 ---------------------------------------------------------------------------------------*/
 
@@ -69,6 +69,9 @@ int main(int argc, char **argv)
 	struct ThreadStack tstack;	// struct for popping and pulling
 
 	push(&tlist[0], &tstack);
+
+	pthread_t *yes;
+	yes = pop(&tstack);
 
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
