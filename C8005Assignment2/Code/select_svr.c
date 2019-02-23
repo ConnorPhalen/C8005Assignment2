@@ -17,23 +17,27 @@
 --	PROGRAMMERS:	Connor Phalen and Greg Little
 --
 --	NOTES:
+--  FD_SETSIZE is restricted to 1024, so that is the select servers upper limit. Could extend it by making another higher variable?
 --	Compile using this -> gcc -Wall -o sel_svr select_svr.c 
 --  https://stackoverflow.com/questions/26753957/how-to-dynamically-allocateinitialize-a-pthread-array
 ---------------------------------------------------------------------------------------*/
 
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
+//#include <sys/stat.h>
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <strings.h>
-#include <string.h>
+//#include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <netdb.h>
+//#include <netdb.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include "threadstack.h"
 
 #define SERVER_PORT 8080
 #define BUFLEN 255
@@ -49,8 +53,9 @@ int main(int argc, char **argv)
 /* ---- Variable Setup ---- */
 	int i, maxi, nready, bytes_to_read;
 	int socket_desc, new_socket_desc, client_len; 	// Socket specific
-	int port, maxfd, client[FD_SETSIZE];			// Select specific
+	int port, maxfd, clientfd[FD_SETSIZE];			// Select specific
 	ssize_t n;
+	struct sockaddr_in server, client;
 
 	pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
 
@@ -59,7 +64,11 @@ int main(int argc, char **argv)
    	fd_set rset, allset; 	// Select variables for file descriptors
 	FILE *filewriter; 		// For exporting performance data
 
-	struct sockaddr_in server, client;
+	const struct timeval timeout = (struct timeval){ 1 };	// const timeout of 1 second
+
+	struct ThreadStack tstack;	// struct for popping and pulling
+
+	push(&tlist[0], &tstack);
 
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
@@ -90,61 +99,22 @@ int main(int argc, char **argv)
 	listen(socket_desc, LISTEN_QUOTA);
 
 	maxfd	= socket_desc;	// initialize
-   	maxi	= -1;			// index into client[] array
+   	maxi	= -1;			// index into clientfd[] array
 
 	for (i = 0; i < FD_SETSIZE; i++) // Loop to set all entries to -1 (no connections)
 	{
-           	client[i] = -1;            
+           	clientfd[i] = -1;            
 	}
  	FD_ZERO(&allset);				// zero out allset
    	FD_SET(socket_desc, &allset);	// set allset to be used with socket_desc 
 
-	while(TRUE)
+	while(true) // select calls for client connections and thread creation/management
 	{
 
 
 
 
 
-
-
-
-
-		/*
-		client_len = sizeof(client);
-
-		// Set new socket to accept client connection
-		if((new_socket_desc = accept(socket_desc, (struct sockaddr *)&client, &client_len)) == -1)
-		{
-			fprintf(stderr, "Failed to connect to new client\n");
-			exit(1);
-		}
-
-		printf("Remote Address: %s\n", inet_ntoa(client.sin_addr));
-		bp = buf;
-		bytes_to_read = BUFLEN; // Read BUFLEN bytes in socket stream
-
-		// Read in bytes as long as there are bytes to read
-		while((n = recv(new_socket_desc, bp, bytes_to_read, 0)) < BUFLEN)
-		{
-			bp += n;
-			bytes_to_read -= n;
-		}
-
-		printf("User has sent over the message: %s\n", buf);
-
-		bzero(bp, BUFLEN);
-
-		if(send(socket_desc, bp, BUFLEN, 0) < 0)
-		{
-			fprintf(stderr, "Failed to send File: %s\n", buf);
-			exit(1);
-		}
-
-		// Close Listening socket
-		close(socket_desc);
-		return(0);
-		*/
 		
 	}
 /* ---- Closing Tasks ---- */
@@ -157,7 +127,8 @@ int main(int argc, char **argv)
 // tconnect: Thread Process for client connection and data processing
 // Input  - 
 // Output - 
-int tconnect(int yes, char* no);
+int tconnect(int yes, char* no)
 {
 
+	return 0;
 }
