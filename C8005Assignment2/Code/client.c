@@ -50,8 +50,7 @@ int main(int argc, char **argv)
 	FILE *filewriter;
 
 	char  *host, *bp, **pptr;
-	char str[16], send_buf[BUFLEN], og_send_buf[BUFLEN], recieve_buf[BUFLEN];
-	char *token;
+	char str[16], send_buf[BUFLEN], recieve_buf[BUFLEN];
 
 	switch(argc)
 	{

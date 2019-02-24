@@ -1,6 +1,9 @@
 Hello, and welcome to Gren and Connor's COMP 8005 Assignemnt #2, A.K.A. The Select & Epoll Server Assignment Based on Scalability and Performance 
 (unofficially SESABSP, because acronyms make every project seem important)
 
+Compile:
+	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c -pthread
+
 Setup and Config:
 	To Setup this program, 
 
