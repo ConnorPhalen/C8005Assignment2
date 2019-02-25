@@ -194,7 +194,7 @@ int main(int argc, char **argv)
 				if(i == FD_SETSIZE2) // No empty space for new clients (1024 clients????)
 	         	{
 					printf("Too many clients\n");
-	            			exit(1);
+	            	exit(1);
 	    		}
 
 				FD_SET(sockpoint, &allset);     // add new descriptor to set

@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------------------
---	SOURCE FILE:	client.c
+--	SOURCE FILE:	client2.c
 --
---	PROGRAM:		clnt
+--	PROGRAM:		client2
 --
 --	FUNCTIONS:		Add Additional Functions Used Here
 --
@@ -9,8 +9,10 @@
 --
 --	REVISIONS:		(Date and Description)
 --
---				February 11, 2019:
---					- Initial Setup and Push to GitHub Repo
+--              February 11, 2019:
+--                  - Initial Setup and Push to GitHub Repo
+--              February 24, 2019:
+--                  - Version 2
 --
 --	DESIGNERS:		Connor Phalen and Greg Little
 --
@@ -18,7 +20,7 @@
 --
 --	NOTES:
 --	Compile using this -> gcc -Wall client2.c -o client2 -lpthread -g
---  Run using -> ./client [ip address] [num of clients] [f or p] 
+--  Run using -> ./client2 [ip address] [num of clients] [f or p] 
 --  Note f = file transfer & p = send user input paragraph
 ---------------------------------------------------------------------------------------*/
 
