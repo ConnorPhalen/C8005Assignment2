@@ -18,7 +18,7 @@
 --
 --	NOTES:
 --  FD_SETSIZE is restricted to 1024, so that is the select servers upper limit. Could extend it by making another higher variable?
---	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c -pthread
+--	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c -lpthread -g
 --  https://stackoverflow.com/questions/26753957/how-to-dynamically-allocateinitialize-a-pthread-array
 ---------------------------------------------------------------------------------------*/
 
@@ -32,48 +32,51 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include "threadstack.h"
 
 #define SERVER_PORT 8080
-#define BUFLEN 255
+#define BUFLEN 1024
 #define LISTEN_QUOTA 5
-#define THREAD_INIT 10
-#define SLEEPYTIME 10 	// Note: microseconds
+#define THREAD_INIT 1000000
+#define THREAD_TIMEOUT 3
+#define FD_SETSIZE2 10000
 
 /* ---- Function Prototypes ---- */
 void* tprocess(void *arguments);
 
 struct targs{
-	int *clientsock;
+	int clientsock;
 	fd_set *readset;
 	fd_set *allset;
+	// Do we need sockaddr_in client for anything?
 };
+
+pthread_mutex_t lock; // Global mutex
 
 // Program Start
 int main(int argc, char **argv)
 {
 /* ---- Variable Setup ---- */
-	int i, maxi, nready, stacksize;
-	int socket_desc, new_socket_desc, client_len; 	// Socket specific
-	int port, maxfd, clientfd[FD_SETSIZE];			// Select specific
+	int i, maxi, nready;
+	int socket_desc, client_len; 	// Socket specific
+	int sockpoint;
+	int maxfd, clientfd[FD_SETSIZE2];			// Select specific
 	struct sockaddr_in server, client;
 
 	pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
+	
+	//struct ThreadStack tstack;	// struct for popping and pulling thread pointers, holds 10 pointers
+	//int stacksize;
 
 	// pthread_mutex_t mutex; // Look into possibly using this. Too many active threads using one mutex may just make everything block because it will be a valuable resource
-
-	// char *bp, buf[BUFLEN]; // Moved to thread
-	// int bytes_to_read;
-	// ssize_t n;
 
    	fd_set readset, allset; 	// Select variables for file descriptors
 	FILE *filewriter; 		// For exporting performance data
 
 	struct timeval timeout = (struct timeval){ 1 };	// timeout of 1 second
-
-	struct ThreadStack tstack;	// struct for popping and pulling
 
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
@@ -84,6 +87,11 @@ int main(int argc, char **argv)
 		// Error in Socket creation
 		perror("Socket failed to be created");
 		exit(1);
+	}
+
+	if (setsockopt(socket_desc, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
+	{
+    	perror("setsockopt(SO_REUSEADDR) failed");
 	}
 
 	// Zero out and create memory for the server struct
@@ -106,12 +114,18 @@ int main(int argc, char **argv)
 	maxfd	= socket_desc;	// initialize
    	maxi	= -1;			// index into clientfd[] array
 
-	for (i = 0; i < FD_SETSIZE; i++) // Loop to set all entries to -1 (no connections)
+	for (i = 0; i < FD_SETSIZE2; i++) // Loop to set all entries to -1 (no connections)
 	{
            	clientfd[i] = -1;            
 	}
  	FD_ZERO(&allset);				// zero out allset
    	FD_SET(socket_desc, &allset);	// set allset to be used with socket_desc 
+
+   	if(pthread_mutex_init(&lock, NULL) != 0)
+   	{
+   		perror("Error initializing mutex\n");
+   		exit(1);
+   	}
 
 	while(true) // select calls for client connections and thread creation/management
 	{
@@ -120,7 +134,7 @@ int main(int argc, char **argv)
    		readset = allset;              
    		// Blocks here until timeout or readfds || writedfs || exceptfds crit
 		nready = select(maxfd + 1, &readset, NULL, NULL, &timeout); 
-
+/*
 		switch(nready)
 		{
 			case 0: // Timeout case
@@ -140,47 +154,54 @@ int main(int argc, char **argv)
 				// returns the number of file descriptors in the select descriptor sets
 				break;
 		}
-
+*/
 /* ---- New Client Has Connected ---- */
 		if(FD_ISSET(socket_desc, &readset)) // New file descriptor set, means new client wants connect
 		{
 			client_len = sizeof(client);
+
 			// accept new client 
-			if((new_socket_desc = accept(socket_desc, (struct sockaddr *) &client, &client_len)) == -1)
+			if((sockpoint = accept(socket_desc, (struct sockaddr *) &client, &client_len)) == -1)
 			{
 				perror("Error accepting new client");
+				exit(1);
 			}
 			printf("New Client Address:  %s\n", inet_ntoa(client.sin_addr));
 
-	        for(i = 0; i < FD_SETSIZE; i++) // Look for open file desc for new client
+	        for(i = 0; i < FD_SETSIZE2; i++) // Look for open file desc for new client
 	        {
 				if(clientfd[i] < 0) // Empty file desc found
 	            {
-					clientfd[i] = new_socket_desc;	// save descriptor
+					clientfd[i] = sockpoint;	// save descriptor
 
 					// TODO: HAND OFF NEW CLIENT CONNECTION TO NEW THREAD
 
-					struct targs args = (struct targs){&new_socket_desc, &readset, &allset}; // worried about memory leaking from this once thread closes
+					struct targs args = (struct targs){sockpoint, &readset, &allset}; // worried about memory leaking from this once thread closes
 
-				    if(pthread_create(&tlist[0], NULL, &tprocess, (void *)&args) != 0) 
+					printf("Starting Thread - %d\n", i);
+				    if(pthread_create(&tlist[i], NULL, &tprocess, (void *)&args) != 0) // !!!! FIX THREAD INIT !!!!
 				    {
-				        printf("Error Occured with Thread Creation");
-				        return -1;
+				    	if(errno == EAGAIN) // System Resources are strained
+				    	{
+				        	perror("Error Occured with Thread Creation");
+				        	exit(1);		    		
+				    	}
+
 				    }
 
 					break;
 	            }
-				if(i == FD_SETSIZE) // No empty space for new clients (1024 clients????)
+				if(i == FD_SETSIZE2) // No empty space for new clients (1024 clients????)
 	         	{
 					printf("Too many clients\n");
-	            			exit(1);
+	            	exit(1);
 	    		}
 
-				FD_SET(new_socket_desc, &allset);     // add new descriptor to set
+				FD_SET(sockpoint, &allset);     // add new descriptor to set
 
-				if(new_socket_desc > maxfd)
+				if(sockpoint > maxfd)
 				{
-					maxfd = new_socket_desc;	// for select
+					maxfd = sockpoint;	// for select
 				}
 				if(i > maxi) // maxi set to highest client index
 				{
@@ -193,13 +214,12 @@ int main(int argc, char **argv)
 	        }
 		}
 
-		
-
 
 	}
 /* ---- Closing Tasks ---- */
-	// Close Listening socket
+	// Close these by accepting the CRTL+C input and directing here
 	close(socket_desc);
+	pthread_mutex_destroy(&lock);
 	return(0);
 }
 
@@ -213,50 +233,62 @@ void* tprocess(void *arguments)
 	int bytes_to_read;
 	ssize_t n = -1;
 
-	struct targs *targs = arguments;
+	struct targs *targs = arguments; // Can we skip to just using the arguments pointer below here?
+	//struct timeval ttimeout_old, ttimeout_new;// Setup timeout variable
 
-	int *clientsock = targs->clientsock; // Feel like this is a waste of memory :(
+	int clientsock = targs->clientsock;
 	fd_set *readset = targs->readset;
 	fd_set *allset  = targs->allset;
 
 	// Write this to performance file? Pipe back process for that?
-	printf("Hello, my name is Thread #%ld, it is a pleasure to do business with you :)\n", pthread_self());
+	printf("Thread #%ld reporting in, it is a pleasure to do business with you :)\n\n", pthread_self());
+
+	//gettimeofday(&ttimeout_old, NULL); // get time of day for later
 
 	while(true)
 	{
-		/*
-		if(clientsock < 0) // if client descriptor has no data, wait
-		{
-			continue;
-		}
-		*/
 /* ---- Check for data ---- */
-		if(FD_ISSET(*clientsock, &(*readset))) // Check to see if our socket is flagged for reading
+		if(FD_ISSET(clientsock, readset)) // Check to see if our socket is flagged for reading
 		{
 			bp = buf;
 			bytes_to_read = BUFLEN;
-			while ((n = read(*clientsock, bp, bytes_to_read)) > 0) 
+			while ((n = read(clientsock, bp, bytes_to_read)) < bytes_to_read) 
 			{
 				bp += n;
 				bytes_to_read -= n;
+
+				if(n == 0)
+				{
+					break; // no more bytes to read
+				}
 			}
-			write(*clientsock, buf, BUFLEN);   // echo to client
+			//pthread_mutex_lock(&lock); // Bad? but fixes multiple writes that cause borked pipes
+			write(clientsock, buf, BUFLEN);   // echo to client
+			//pthread_mutex_unlock(&lock);
+			//gettimeofday(&ttimeout_old, NULL); // active connection, so update ttimeout_old
 		}
 
+		//gettimeofday(&ttimeout_new, NULL); // update time, probably slow
+
 /* ---- Communicate with Main Process for this Threads Closure ---- */
-		if (n == 0) // connection closed  NOTE: Have a timeout possible as well for unexpected client closure
+		// if((ttimeout_new.tv_sec - ttimeout_old.tv_sec) > THREAD_TIMEOUT)
+		if(n == 0) // check if timeout reached
 	    {
-			printf("Client has closed connection. Starting thread closure process...\n");
-			close(*clientsock);
-			FD_CLR(*clientsock, allset);
-
-			// Communicate with main process for last bit of cleanup
-	       	// client[i] = -1;
-
-	       	// Thread Join or what for closing it???? Cand is it called from process????
-			return NULL;
+	    	break;
 	    }
 	}
+	pthread_mutex_lock(&lock);
+	printf("Thread %ld: Client has finished. Starting thread closure process...\n", pthread_self());
+	close(clientsock);
+	FD_CLR(clientsock, allset);
+
+	// Communicate with main process for last bit of cleanup
+   	// client[i] = -1;
+
+   	// Thread Join or what for closing it???? Cand is it called from process????
+   	pthread_mutex_unlock(&lock);
+    pthread_exit(NULL);
+
 	return NULL;
 }
 

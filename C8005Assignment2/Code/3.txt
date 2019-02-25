@@ -1,0 +1,4 @@
+while loop
+    check if new connection
+    check if already connected
+
