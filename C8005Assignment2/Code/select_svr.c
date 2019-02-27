@@ -17,8 +17,9 @@
 --	PROGRAMMERS:	Connor Phalen and Greg Little
 --
 --	NOTES:
---  FD_SETSIZE is restricted to 1024, so that is the select servers upper limit. Could extend it by making another higher variable?
+--  FD_SETSIZE is restricted to 1024, need to find out if that will restrict us, and how to get around it
 --	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c -lpthread -g
+--  https://stackoverflow.com/questions/911860/does-malloc-lazily-create-the-backing-pages-for-an-allocation-on-linux-and-othe
 --  https://stackoverflow.com/questions/26753957/how-to-dynamically-allocateinitialize-a-pthread-array
 ---------------------------------------------------------------------------------------*/
 
@@ -54,7 +55,7 @@ struct targs{
 	// Do we need sockaddr_in client for anything?
 };
 
-pthread_mutex_t lock; // Global mutex
+pthread_mutex_t tlock; // Global mutex for threads
 
 // Program Start
 int main(int argc, char **argv)
@@ -68,15 +69,31 @@ int main(int argc, char **argv)
 
 	pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
 	
+	struct tnode *head, *tail; // pointers to the head and tail nodes
+
 	//struct ThreadStack tstack;	// struct for popping and pulling thread pointers, holds 10 pointers
 	//int stacksize;
 
-	// pthread_mutex_t mutex; // Look into possibly using this. Too many active threads using one mutex may just make everything block because it will be a valuable resource
-
-   	fd_set readset, allset; 	// Select variables for file descriptors
+   	fd_set readset, allset; // Select variables for file descriptors
 	FILE *filewriter; 		// For exporting performance data
 
 	struct timeval timeout = (struct timeval){ 1 };	// timeout of 1 second
+
+/* ---- Variable Testing REMOVE LATER ---- */
+	// init memory for node, malloc might be faster, but am worried about its "optimistic memory allocation" (see notes)
+	// malloc is faster, but could over address memory if on a low memory system, as malloc doesn't init memory until it is used
+	struct tnode *yesnode 	= calloc(1, sizeof(struct tnode)); 
+	struct tnode *nonode 	= calloc(1, sizeof(struct tnode)); 
+	struct tnode *maybenode = calloc(1, sizeof(struct tnode)); 
+	struct tnode *sonode	= calloc(1, sizeof(struct tnode)); 
+
+	head = yesnode;
+	tail = NULL;
+
+	tail = tnodepush(tail, yesnode);
+	tail = tnodepush(tail, nonode); 
+	tail = tnodepush(tail, maybenode);
+	tail = tnodepush(tail, sonode);
 
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
@@ -121,9 +138,9 @@ int main(int argc, char **argv)
  	FD_ZERO(&allset);				// zero out allset
    	FD_SET(socket_desc, &allset);	// set allset to be used with socket_desc 
 
-   	if(pthread_mutex_init(&lock, NULL) != 0)
+   	if(pthread_mutex_init(&tlock, NULL) != 0)
    	{
-   		perror("Error initializing mutex\n");
+   		perror("Error initializing thread mutex\n");
    		exit(1);
    	}
 
@@ -138,7 +155,7 @@ int main(int argc, char **argv)
 		switch(nready)
 		{
 			case 0: // Timeout case
-				stacksize = isfull(&tstack);
+				stacksize = stackisfull(&tstack);
 				if(stacksize > 0)
 				{
 					// Stack is not full, so make new threads and top up stack
@@ -218,8 +235,10 @@ int main(int argc, char **argv)
 	}
 /* ---- Closing Tasks ---- */
 	// Close these by accepting the CRTL+C input and directing here
+	free(tail);
+	free(head);
 	close(socket_desc);
-	pthread_mutex_destroy(&lock);
+	pthread_mutex_destroy(&tlock);
 	return(0);
 }
 
@@ -262,9 +281,9 @@ void* tprocess(void *arguments)
 					break; // no more bytes to read
 				}
 			}
-			//pthread_mutex_lock(&lock); // Bad? but fixes multiple writes that cause borked pipes
+			//pthread_mutex_lock(&tlock); // Bad? but fixes multiple writes that cause borked pipes
 			write(clientsock, buf, BUFLEN);   // echo to client
-			//pthread_mutex_unlock(&lock);
+			//pthread_mutex_unlock(&tlock);
 			//gettimeofday(&ttimeout_old, NULL); // active connection, so update ttimeout_old
 		}
 
@@ -277,7 +296,7 @@ void* tprocess(void *arguments)
 	    	break;
 	    }
 	}
-	pthread_mutex_lock(&lock);
+	pthread_mutex_lock(&tlock);
 	printf("Thread %ld: Client has finished. Starting thread closure process...\n", pthread_self());
 	close(clientsock);
 	FD_CLR(clientsock, allset);
@@ -286,7 +305,7 @@ void* tprocess(void *arguments)
    	// client[i] = -1;
 
    	// Thread Join or what for closing it???? Cand is it called from process????
-   	pthread_mutex_unlock(&lock);
+   	pthread_mutex_unlock(&tlock);
     pthread_exit(NULL);
 
 	return NULL;
