@@ -81,65 +81,79 @@ int stackisfull(struct ThreadStack *tstack)
 /* tnode_rm_thread - remove a node from a linked list that has the corresponding thread
 *  Input 	- headnode - Head of the linked list | dthread - pointer toa thread we want gone
 *  Output	- returns a pointer to the removed tnode so we can free its memory, or NULL if thread does not exist
-*  NOTE: Atlmost the same as tnode_pop, except that it is intended to be used with a thread that returned from its tour of duty
+*  NOTE: Focuses on the nodes' threads, so won't work for uninitialized threads
 */
-struct tnode * tnodermt(struct tnode *headnode, pthread_t *dthread)
+struct tnode * tnodermt(struct tnode *headnode, pthread_t dthread)
 {
-	struct tnode *dnode; // node which we will use to move around, then return at proper node
+	struct tnode *dnode = headnode;
 
-	for(dnode = headnode; pthread_equal(*dthread, dnode->thread) != 0; dnode = dnode->next) // for every node we come across that matches the thread ID's
+	while(pthread_equal(dthread, dnode->thread) != 0) // move through until we get a match
 	{
-		if(dnode->prev == NULL)	// check if head
+		dnode = dnode->next;
+		if(dnode == NULL) // if the next node doesn't exist
 		{
-			dnode->next->prev = NULL;
-			return dnode; // dnode was head all along
+			return NULL; // That thread ID does not exist
 		}
-		if(dnode->next == NULL)	// check if tail
-		{
-			dnode->prev->next = NULL;
-			return dnode; // dnode was tail all along
-		}
+	}
+
+	if(dnode->prev == NULL)	// check if head
+	{
+		//if(dnode->next == NULL){} // Is head and tail node
+		dnode->next->prev = NULL;
+		headnode = dnode->next; // DOESN'T WORK !!!! FIND A SOLUTION
+	}
+	else if(dnode->next == NULL)	// check if tail
+	{
+		//if(dnode->prev == NULL){} // Is tail and head node
+		dnode->prev->next = NULL;
+	}
+	else
+	{
 		// reassign next and previous pointers
 		dnode->prev->next = dnode->next;
 		dnode->next->prev  = dnode->prev;
-		return dnode;
 	}
-	return NULL; // That thread ID does not exist
+	return dnode;
 }
 
 /* tnode_pop - remove a node from a linked list by reassinging the next & prev nodes
 *  Input 	 - headnode - Head of the linked list | popnode - tnode to pop out of list
-*  Output	 - returns a pointer to be popped out
+*  Output	 - returns a pointer to be popped out struct
 */
 struct tnode * tnodepop(struct tnode *headnode, struct tnode *popnode)
 {
-	struct tnode *dnode; // node which we will use to move around, then return at proper node
+	struct tnode *dnode = headnode;
 
-	for(dnode = headnode; pthread_equal(popnode->thread, dnode->thread) != 0; dnode = dnode->next) // for every node we come across that matches the thread ID's
+	while(dnode != popnode) // move through until we get a match
 	{
-		if(dnode->prev == NULL)	// check if head
+		dnode = dnode->next;
+		if(dnode == NULL) // if the next node doesn't exist
 		{
-			//if(dnode->next == NULL){} // Is head and tail node
-			
-			dnode->next->prev = NULL;
-			return dnode; // dnode was head all along
+			return NULL; // That thread ID does not exist
 		}
-		if(dnode->next == NULL)	// check if tail
-		{
-			//if(dnode->prev == NULL){} // Is tail and head node
+	}
 
-			dnode->prev->next = NULL;
-			return dnode; // dnode was tail all along
-		}
+	if(dnode->prev == NULL)	// check if head
+	{
+		//if(dnode->next == NULL){} // Is head and tail node
+		dnode->next->prev = NULL;
+		headnode = dnode->next; // DOESN'T WORK !!!! FIND A SOLUTION
+	}
+	else if(dnode->next == NULL)	// check if tail
+	{
+		//if(dnode->prev == NULL){} // Is tail and head node
+		dnode->prev->next = NULL;
+	}
+	else
+	{
 		// reassign next and previous pointers
 		dnode->prev->next = dnode->next;
 		dnode->next->prev  = dnode->prev;
-		return dnode;
 	}
-	return NULL; // That thread ID does not exist
+	return dnode;
 }
 
-/* tnode_push - pusha  new node at the end of the linked list
+/* tnode_push - push a new node at the end of the linked list
 *  Input 	  - tail - Tail of the linked list | pushnode - tnode to push into list
 *  Output	  - returns a pointer to the pushed node
 *  NOTE: The pushed node will become the new tail node when returned
@@ -154,7 +168,20 @@ struct tnode * tnodepush(struct tnode *tail, struct tnode *pushnode)
 	tail->next = pushnode;
 	pushnode->prev = tail; // could be head node as well, but this assignment wouldn't matter
 	pushnode->next = NULL; 
-	//tail = pushnode; // Here as a reminded of pass-by-value... for some reason
+	// tail = pushnode; // Here as a reminded of pass-by-value... for some reason
 
 	return pushnode; // return pointer to pushed node
+}
+
+/* tnodeistail - check to see if node is tail, function to double check in edge cases
+*  Input 	  - tail - Tail of the linked list | checknode - tnode to check against
+*  Output	  - returns a pointer to the checked node if tail, NULL if not tail
+*/
+struct tnode * tnodeistail(struct tnode *tail, struct tnode *checknode)
+{
+	if(tail == checknode) // check address locations
+	{
+		return checknode;
+	}
+	return NULL;
 }

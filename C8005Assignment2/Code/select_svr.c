@@ -95,6 +95,12 @@ int main(int argc, char **argv)
 	tail = tnodepush(tail, maybenode);
 	tail = tnodepush(tail, sonode);
 
+	tnodepop(head, maybenode);
+	if(tnodermt(head, sonode->thread) == NULL)
+	{
+		printf("Thread isn't initialized/Thread Does not exist\n"); // just testing
+	}
+
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
 

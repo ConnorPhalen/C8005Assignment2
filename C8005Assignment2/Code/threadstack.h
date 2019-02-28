@@ -19,7 +19,7 @@ struct tnode // Thread Node for allocating and removing threads (A.K.A. Linked L
 pthread_t* stackpop(struct ThreadStack *tstack);
 int stackpush(pthread_t *thread, struct ThreadStack *tstack);
 int stackisfull(struct ThreadStack *tstack);
-struct tnode * tnodermt(struct tnode *headnode, pthread_t *dthread);
+struct tnode * tnodermt(struct tnode *headnode, pthread_t dthread);
 struct tnode * tnodepop(struct tnode *headnode, struct tnode *popnode);
 struct tnode * tnodepush(struct tnode *tailnode, struct tnode *pushnode);
 #endif // THREADSTACK_H_
