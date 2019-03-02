@@ -2,6 +2,7 @@
 #define THREADSTACK_H_
 #include <stdlib.h>
 #include <pthread.h>
+#include <stdbool.h>
 // Struct Declaration
 #define STACKLIMIT 10
 struct ThreadStack // Thread Stack for holding pointers to waiting pthreads
@@ -12,6 +13,8 @@ struct ThreadStack // Thread Stack for holding pointers to waiting pthreads
 struct tnode // Thread Node for allocating and removing threads (A.K.A. Linked Lists)
 {
 	pthread_t thread;	// Actual thread
+	int *clientsock;	// socket that the above thread will use
+	bool joinable;
 	struct tnode *prev;	// Pointer to previous node
 	struct tnode *next;	// Pointer to next node
 };

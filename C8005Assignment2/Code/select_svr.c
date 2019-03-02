@@ -30,10 +30,12 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include "threadstack.h"
@@ -49,13 +51,15 @@
 void* tprocess(void *arguments);
 
 struct targs{
-	int clientsock;
+	int *clientsock;
+	struct tnode *nodehold;
 	fd_set *readset;
 	fd_set *allset;
 	// Do we need sockaddr_in client for anything?
 };
 
 pthread_mutex_t tlock; // Global mutex for threads
+pthread_mutex_t memlock; // Global mutex for memory creation
 
 // Program Start
 int main(int argc, char **argv)
@@ -67,9 +71,9 @@ int main(int argc, char **argv)
 	int maxfd, clientfd[FD_SETSIZE2];			// Select specific
 	struct sockaddr_in server, client;
 
-	pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
+	//pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
 	
-	struct tnode *head, *tail; // pointers to the head and tail nodes
+	struct tnode *head, *tail, *dnode; // pointers to the head and tail nodes
 
 	//struct ThreadStack tstack;	// struct for popping and pulling thread pointers, holds 10 pointers
 	//int stacksize;
@@ -82,24 +86,14 @@ int main(int argc, char **argv)
 /* ---- Variable Testing REMOVE LATER ---- */
 	// init memory for node, malloc might be faster, but am worried about its "optimistic memory allocation" (see notes)
 	// malloc is faster, but could over address memory if on a low memory system, as malloc doesn't init memory until it is used
-	struct tnode *yesnode 	= calloc(1, sizeof(struct tnode)); 
-	struct tnode *nonode 	= calloc(1, sizeof(struct tnode)); 
-	struct tnode *maybenode = calloc(1, sizeof(struct tnode)); 
-	struct tnode *sonode	= calloc(1, sizeof(struct tnode)); 
+	struct tnode *yesnode 	= calloc(1, sizeof(struct tnode));
+	struct tnode *nonode 	= calloc(1, sizeof(struct tnode));
 
 	head = yesnode;
 	tail = NULL;
 
 	tail = tnodepush(tail, yesnode);
-	tail = tnodepush(tail, nonode); 
-	tail = tnodepush(tail, maybenode);
-	tail = tnodepush(tail, sonode);
-
-	tnodepop(head, maybenode);
-	if(tnodermt(head, sonode->thread) == NULL)
-	{
-		printf("Thread isn't initialized/Thread Does not exist\n"); // just testing
-	}
+	tail = tnodepush(tail, nonode);
 
 /* ---- Socket Init ---- */
 	fprintf(stdout, "Opening server on Port %d\n", SERVER_PORT);
@@ -146,17 +140,60 @@ int main(int argc, char **argv)
 
    	if(pthread_mutex_init(&tlock, NULL) != 0)
    	{
-   		perror("Error initializing thread mutex\n");
+   		perror("Error initializing thread mutex");
    		exit(1);
    	}
 
+   	if(pthread_mutex_init(&memlock, NULL) != 0)
+   	{
+   		perror("Error initializing thread mutex");
+   		exit(1);
+   	}
+
+   	signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE errors, will handle the errors when they happen
+
+   	/*
+   	* New Thread Setup that manages the closing funcs of other threads.
+   	* 
+   	*/
+
 	while(true) // select calls for client connections and thread creation/management
 	{
-		timeout.tv_sec = 1; // reset timeout as select might modify it
+		timeout.tv_sec = (size_t)1; // reset timeout as select might modify it
 
    		readset = allset;              
    		// Blocks here until timeout or readfds || writedfs || exceptfds crit
 		nready = select(maxfd + 1, &readset, NULL, NULL, &timeout); 
+
+/* ---- Thread and TNode Cleanup ---- */
+		dnode = head;
+		while(dnode->next != NULL)
+		{
+			// printf("smol check -----");
+			if(dnode->joinable == true)	// Should we mutex the clientfd[x] = -1; ????
+			{
+				printf("Closing Thread #%ld\n", dnode->thread);
+				int result;
+				if((result = pthread_join(dnode->thread, NULL)) != 0)
+				{
+					printf("Error Joining Threads: %s\n", strerror(result));
+					exit(1);
+				}
+				FD_CLR(*(dnode->clientsock), &allset);
+
+				for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
+				{
+					if(clientfd[i] == *(dnode->clientsock))
+					{
+						clientfd[i] = -1;
+						break;
+					}
+				}
+				free(tnodepop(head, dnode));
+			}
+			dnode = dnode->next;
+		}
+		//printf(" ---- \n");
 /*
 		switch(nready)
 		{
@@ -189,7 +226,7 @@ int main(int argc, char **argv)
 				perror("Error accepting new client");
 				exit(1);
 			}
-			printf("New Client Address:  %s\n", inet_ntoa(client.sin_addr));
+			// printf("New Client Address:  %s\n", inet_ntoa(client.sin_addr));
 
 	        for(i = 0; i < FD_SETSIZE2; i++) // Look for open file desc for new client
 	        {
@@ -197,26 +234,31 @@ int main(int argc, char **argv)
 	            {
 					clientfd[i] = sockpoint;	// save descriptor
 
-					// TODO: HAND OFF NEW CLIENT CONNECTION TO NEW THREAD
+					struct tnode *threadnode = calloc(1, sizeof(struct tnode)); 
+					struct targs *args 		 = calloc(1, sizeof(struct targs));
 
-					struct targs args = (struct targs){sockpoint, &readset, &allset}; // worried about memory leaking from this once thread closes
+					// struct targs args = (struct targs){&(clientfd[i]), threadnode, &readset, &allset}; // worried about memory leaking from this once thread closes
+					args->clientsock = &(clientfd[i]);
+					args->nodehold 	 = threadnode;
+					args->readset 	 = &readset;
+					args->allset 	 = &allset;
+					threadnode->clientsock = &(clientfd[i]);
 
-					printf("Starting Thread - %d\n", i);
-				    if(pthread_create(&tlist[i], NULL, &tprocess, (void *)&args) != 0) // !!!! FIX THREAD INIT !!!!
+					//printf("Starting Thread - %d\n", i);
+				    if(pthread_create(&(threadnode->thread), NULL, &tprocess, (void *)args) != 0) // !!!! FIX THREAD INIT !!!!
 				    {
 				    	if(errno == EAGAIN) // System Resources are strained
 				    	{
 				        	perror("Error Occured with Thread Creation");
 				        	exit(1);		    		
 				    	}
-
 				    }
-
+				    tail = tnodepush(tail, threadnode); // Push new thread into linked list
 					break;
 	            }
 				if(i == FD_SETSIZE2) // No empty space for new clients (1024 clients????)
 	         	{
-					printf("Too many clients\n");
+					printf("Too many clients\n\n\n");
 	            	exit(1);
 	    		}
 
@@ -237,14 +279,14 @@ int main(int argc, char **argv)
 	        }
 		}
 
-
 	}
 /* ---- Closing Tasks ---- */
 	// Close these by accepting the CRTL+C input and directing here
-	free(tail);
-	free(head);
+	//free(tail);
+	//free(head);
 	close(socket_desc);
 	pthread_mutex_destroy(&tlock);
+	pthread_mutex_destroy(&memlock);
 	return(0);
 }
 
@@ -258,38 +300,67 @@ void* tprocess(void *arguments)
 	int bytes_to_read;
 	ssize_t n = -1;
 
-	struct targs *targs = arguments; // Can we skip to just using the arguments pointer below here?
+	//struct targs *targs = arguments; // Can we skip to just using the arguments pointer below here?
 	//struct timeval ttimeout_old, ttimeout_new;// Setup timeout variable
 
-	int clientsock = targs->clientsock;
+	pthread_mutex_lock(&memlock);
+	struct targs *targs = arguments;
+	pthread_mutex_unlock(&memlock);
+//	pthread_mutex_lock(&memlock);
+//	struct targs *targs = calloc(1, sizeof(struct targs));
+//	if(memcpy((struct targs *)targs, arguments, sizeof(struct targs)) == NULL)
+//	{
+//		perror("Failed to allocate memory for thread arguments");
+//		exit(1);
+//	}
+//	pthread_mutex_unlock(&memlock);
+
+	//int *clientsock = targs->clientsock;
 	fd_set *readset = targs->readset;
 	fd_set *allset  = targs->allset;
 
 	// Write this to performance file? Pipe back process for that?
-	printf("Thread #%ld reporting in, it is a pleasure to do business with you :)\n\n", pthread_self());
+	//printf("Thread #%ld reporting in, it is a pleasure to do business with you :)\n\n", pthread_self());
 
 	//gettimeofday(&ttimeout_old, NULL); // get time of day for later
 
 	while(true)
 	{
 /* ---- Check for data ---- */
-		if(FD_ISSET(clientsock, readset)) // Check to see if our socket is flagged for reading
+		if(FD_ISSET(*(targs->clientsock), readset)) // Check to see if our socket is flagged for reading
 		{
 			bp = buf;
 			bytes_to_read = BUFLEN;
-			while ((n = read(clientsock, bp, bytes_to_read)) < bytes_to_read) 
+			while ((n = read(*(targs->clientsock), bp, bytes_to_read)) < bytes_to_read) 
 			{
 				bp += n;
 				bytes_to_read -= n;
-
+				pthread_mutex_lock(&tlock);
+				printf("Socket -> %d to Thread ID %ld\n", *(targs->clientsock), pthread_self());
+				pthread_mutex_unlock(&tlock);
 				if(n == 0)
 				{
 					break; // no more bytes to read
 				}
+
+//				if(n == -1)
+//				{
+//					perror("ERROR"); // Connection reset by peer (client seg fault)
+//					exit(1);
+//				}
 			}
-			//pthread_mutex_lock(&tlock); // Bad? but fixes multiple writes that cause borked pipes
-			write(clientsock, buf, BUFLEN);   // echo to client
-			//pthread_mutex_unlock(&tlock);
+			pthread_mutex_lock(&tlock); // Bad? but fixes multiple writes that cause borked pipes
+			if(write(*(targs->clientsock), buf, BUFLEN) == -1)   // echo to client
+			{
+				if(errno == EPIPE) // If Peer end was broken
+				{
+					break; // break out so we can clsoe connection
+				}
+				/* Deal with other Client Pipe errors here */
+				perror("Error writing to client");
+				exit(1);
+			}
+			pthread_mutex_unlock(&tlock);
 			//gettimeofday(&ttimeout_old, NULL); // active connection, so update ttimeout_old
 		}
 
@@ -303,18 +374,15 @@ void* tprocess(void *arguments)
 	    }
 	}
 	pthread_mutex_lock(&tlock);
-	printf("Thread %ld: Client has finished. Starting thread closure process...\n", pthread_self());
-	close(clientsock);
-	FD_CLR(clientsock, allset);
+	printf("Thread #%ld: Client done, closing thread...\n", pthread_self());
+	close(*(targs->clientsock));
+	FD_CLR(*(targs->clientsock), allset);
 
-	// Communicate with main process for last bit of cleanup
-   	// client[i] = -1;
-
-   	// Thread Join or what for closing it???? Cand is it called from process????
+   	targs->nodehold->joinable = true; // set tnode to specify its thread can be joined
+   	free(arguments);
    	pthread_mutex_unlock(&tlock);
-    pthread_exit(NULL);
-
-	return NULL;
+    //pthread_exit(NULL);
+    return 0;
 }
 
 
