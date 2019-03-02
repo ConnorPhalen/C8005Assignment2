@@ -45,7 +45,7 @@
 #define LISTEN_QUOTA 5
 #define THREAD_INIT 1000000
 #define THREAD_TIMEOUT 3
-#define FD_SETSIZE2 10000
+#define FD_SETSIZE2 20000
 
 /* ---- Function Prototypes ---- */
 void* tprocess(void *arguments);
@@ -180,6 +180,7 @@ int main(int argc, char **argv)
 					exit(1);
 				}
 				FD_CLR(*(dnode->clientsock), &allset);
+				close(*(dnode->clientsock));
 
 				for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
 				{
@@ -358,6 +359,7 @@ void* tprocess(void *arguments)
 				}
 				/* Deal with other Client Pipe errors here */
 				perror("Error writing to client");
+				printf("THREAD - %ld\nSOCKET - %d\n", pthread_self(), *(targs->clientsock));
 				exit(1);
 			}
 			pthread_mutex_unlock(&tlock);
@@ -375,8 +377,7 @@ void* tprocess(void *arguments)
 	}
 	pthread_mutex_lock(&tlock);
 	printf("Thread #%ld: Client done, closing thread...\n", pthread_self());
-	close(*(targs->clientsock));
-	FD_CLR(*(targs->clientsock), allset);
+	FD_CLR(*(targs->clientsock), allset); // move to cleanup section????
 
    	targs->nodehold->joinable = true; // set tnode to specify its thread can be joined
    	free(arguments);
