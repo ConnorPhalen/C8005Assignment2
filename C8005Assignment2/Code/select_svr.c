@@ -17,7 +17,6 @@
 --	PROGRAMMERS:	Connor Phalen and Greg Little
 --
 --	NOTES:
---  FD_SETSIZE is restricted to 1024, need to find out if that will restrict us, and how to get around it
 --	Compile using this -> gcc -Wall -o sel_svr select_svr.c threadstack.c -lpthread -g
 --  https://stackoverflow.com/questions/911860/does-malloc-lazily-create-the-backing-pages-for-an-allocation-on-linux-and-othe
 --  https://stackoverflow.com/questions/26753957/how-to-dynamically-allocateinitialize-a-pthread-array
@@ -53,6 +52,7 @@ void* tprocess(void *arguments);
 struct targs{
 	int *clientsock;
 	struct tnode *nodehold;
+	FILE *perfwriter;
 	fd_set *readset;
 	fd_set *allset;
 	// Do we need sockaddr_in client for anything?
@@ -60,32 +60,27 @@ struct targs{
 
 pthread_mutex_t tlock; // Global mutex for threads
 pthread_mutex_t memlock; // Global mutex for memory creation
+pthread_mutex_t filelock; // Global mutex for memory creation
 
 // Program Start
 int main(int argc, char **argv)
 {
 /* ---- Variable Setup ---- */
-	int i, maxi, nready;
+	int i, maxi, nready, conncounter;
 	int socket_desc, client_len; 	// Socket specific
 	int sockpoint;
 	int maxfd, clientfd[FD_SETSIZE2];			// Select specific
 	struct sockaddr_in server, client;
 
-	//pthread_t tlist[THREAD_INIT];	// Create list of threads, this will top up with unused threads
-	
 	struct tnode *head, *tail, *dnode; // pointers to the head and tail nodes
-
-	//struct ThreadStack tstack;	// struct for popping and pulling thread pointers, holds 10 pointers
-	//int stacksize;
 
    	fd_set readset, allset; // Select variables for file descriptors
 	FILE *filewriter; 		// For exporting performance data
 
 	struct timeval timeout = (struct timeval){ 1 };	// timeout of 1 second
 
-/* ---- Variable Testing REMOVE LATER ---- */
+/* ---- Variable Testing  ---- */
 	// init memory for node, malloc might be faster, but am worried about its "optimistic memory allocation" (see notes)
-	// malloc is faster, but could over address memory if on a low memory system, as malloc doesn't init memory until it is used
 	struct tnode *yesnode 	= calloc(1, sizeof(struct tnode));
 	struct tnode *nonode 	= calloc(1, sizeof(struct tnode));
 
@@ -143,8 +138,12 @@ int main(int argc, char **argv)
    		perror("Error initializing thread mutex");
    		exit(1);
    	}
-
    	if(pthread_mutex_init(&memlock, NULL) != 0)
+   	{
+   		perror("Error initializing thread mutex");
+   		exit(1);
+   	}
+   	if(pthread_mutex_init(&filelock, NULL) != 0)
    	{
    		perror("Error initializing thread mutex");
    		exit(1);
@@ -241,6 +240,7 @@ int main(int argc, char **argv)
 					// struct targs args = (struct targs){&(clientfd[i]), threadnode, &readset, &allset}; // worried about memory leaking from this once thread closes
 					args->clientsock = &(clientfd[i]);
 					args->nodehold 	 = threadnode;
+					args->perfwriter = filewriter;
 					args->readset 	 = &readset;
 					args->allset 	 = &allset;
 					threadnode->clientsock = &(clientfd[i]);
