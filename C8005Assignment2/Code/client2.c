@@ -50,7 +50,7 @@ struct targs{
 
 
 int connectionWorker (char* host, char* work);
-double secdelay(struct timeval *start, struct timeval *end);
+double delay(struct timeval *start, struct timeval *end);
 
 int send_amount = PROCMOD; // The higher the number, the more overlap between sleep sections, can be local if we delete thread function
 pthread_mutex_t *filelock; // Global mutex for file locking
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 
     //pthread_t threads[THREAD_INIT];//make linked list
     FILE *filewriter;
-    char *writebuf[12];
+    char *writebuf;
     struct timeval tstart, tcheck;
 
     //worker
@@ -220,10 +220,15 @@ int main(int argc, char **argv)
     }
     gettimeofday(&tcheck, NULL);
 
-    printf("Time Stuff - %.2f & ", (secdelay(&tstart, &tcheck)));
-    sprintf(writebuf, " %.2f ,", secdelay(&tstart, &tcheck));
-    fwrite(writebuf, 1, sizeof(writebuf), filewriter);
+    double delayed = delay(&tstart, &tcheck);
+    printf("Time Stuff - %.2f & ", (delayed));
+    //snprintf(writebuf, sizeof(delayed)," %.2f ,", delayed);
+
+    fprintf(filewriter," %.2f ,", delayed);
+
+    //fwrite(testbuf, sizeof(char), (strlen(testbuf) * sizeof(char)), filewriter);
     fclose(filewriter);
+    gettimeofday(&tstart, NULL); // update tstart to reflect that it was jsut logged
 
     pthread_mutex_unlock(*(&filelock));
 //
@@ -370,10 +375,10 @@ int connectionWorker (char* host, char* work){
 }
 
 // Calculate difference between two points in time
-double secdelay(struct timeval *start, struct timeval *end)
+double delay(struct timeval *start, struct timeval *end)
 {
     double timesum = (end->tv_sec - start->tv_sec) * 1000;  // seconds to milliseconds
     timesum += (end->tv_usec - start->tv_usec) / 1000;   // microseconds to milliseconds
 
-    return (timesum / 1000); // return in seconds
+    return (timesum); // return in seconds
 }

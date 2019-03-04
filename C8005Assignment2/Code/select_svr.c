@@ -41,15 +41,17 @@
 
 #define SERVER_PORT 8080
 #define BUFLEN 1024
-#define LISTEN_QUOTA 5
+#define LISTEN_QUOTA 500
 #define THREAD_TIMEOUT 3
 #define FD_SETSIZE2 1024 // Adjust based on real-world testing
 #define PERFFILE "select_server_perf.csv\0"
 #define PERFFILE2 "select_server_thread_data.csv\0"
+#define DELIM " , "
 
 /* ---- Function Prototypes ---- */
 void* tprocess(void *arguments);
 void sigHandler(int sigNum);
+double delay(struct timeval *start, struct timeval *end);
 
 struct targs{
 	int *clientsock;
@@ -72,6 +74,7 @@ int main(int argc, char **argv)
 	int socket_desc, client_len; 	// Socket specific
 	int sockpoint;
 	int maxfd, clientfd[FD_SETSIZE2];			// Select specific
+	double dtime;
 	struct sockaddr_in server, client;
 
 	struct tnode *head, *tail, *dnode; // pointers to the head and tail nodes
@@ -80,6 +83,7 @@ int main(int argc, char **argv)
 	FILE *twriter; // For exporting performance data
 
 	struct timeval timeout = (struct timeval){ 1 };	// timeout of 1 second
+	struct timeval tstart, tcheck;
 
 /* ---- Variable Testing  ---- */
 	// init memory for node, malloc might be faster, but am worried about its "optimistic memory allocation" (see notes)
@@ -153,7 +157,7 @@ int main(int argc, char **argv)
         perror("Failed to open file");
         exit(1);
     }
-
+    gettimeofday(&tstart, NULL);
 
    	/*
    	* Fork New Process will run Thread and TNode cleanup to increase performance
@@ -219,6 +223,9 @@ int main(int argc, char **argv)
 					threadnode->clientsock = &(clientfd[i]);
 
 				    printf("Number of Connections %d\n", ++conncounter);
+				    gettimeofday(&tcheck, NULL);
+				    dtime = delay(&tstart, &tcheck);
+
 					//printf("Starting Thread - %d\n", i);
 				    if(pthread_create(&(threadnode->thread), NULL, &tprocess, (void *)args) != 0) // !!!! FIX THREAD INIT !!!!
 				    {
@@ -230,7 +237,8 @@ int main(int argc, char **argv)
 				    }
 				    tail = tnodepush(tail, threadnode); // Push new thread into linked list
 
-				    fwrite(inet_ntoa(client.sin_addr), 1, sizeof(inet_ntoa(client.sin_addr)), filewriter);
+				    fprintf(filewriter, "%s | %f, ", inet_ntoa(client.sin_addr), dtime);
+				    //fwrite(inet_ntoa(client.sin_addr), sizeof(inet_ntoa(client.sin_addr)), 1, filewriter);
 
 					break;
 	            }
@@ -389,4 +397,13 @@ void sigHandler(int sigNum)
 		default:
 			break;
 	}
+}
+
+// Calculate difference between two points in time
+double delay(struct timeval *start, struct timeval *end)
+{
+    double timesum = (end->tv_sec - start->tv_sec) * 1000;  // seconds to milliseconds
+    timesum += (end->tv_usec - start->tv_usec) / 1000;   // microseconds to milliseconds
+
+    return (timesum); // return in seconds
 }
