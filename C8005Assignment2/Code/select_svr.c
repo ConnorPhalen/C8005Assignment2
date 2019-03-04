@@ -42,9 +42,8 @@
 #define SERVER_PORT 8080
 #define BUFLEN 1024
 #define LISTEN_QUOTA 5
-#define THREAD_INIT 1000000
 #define THREAD_TIMEOUT 3
-#define FD_SETSIZE2 20000
+#define FD_SETSIZE2 20000 // Adjust based on real-world testing
 
 /* ---- Function Prototypes ---- */
 void* tprocess(void *arguments);
@@ -60,13 +59,13 @@ struct targs{
 
 pthread_mutex_t tlock; // Global mutex for threads
 pthread_mutex_t memlock; // Global mutex for memory creation
-pthread_mutex_t filelock; // Global mutex for memory creation
+pthread_mutex_t filelock; // Global mutex for file locking
 
 // Program Start
 int main(int argc, char **argv)
 {
 /* ---- Variable Setup ---- */
-	int i, maxi, nready, conncounter;
+	int i, maxi, nready, conncounter = 0;
 	int socket_desc, client_len; 	// Socket specific
 	int sockpoint;
 	int maxfd, clientfd[FD_SETSIZE2];			// Select specific
@@ -152,7 +151,7 @@ int main(int argc, char **argv)
    	signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE errors, will handle the errors when they happen
 
    	/*
-   	* New Thread Setup that manages the closing funcs of other threads.
+   	* Fork New Process that manages the closing of finished threads.
    	* 
    	*/
 
@@ -193,7 +192,6 @@ int main(int argc, char **argv)
 			}
 			dnode = dnode->next;
 		}
-		//printf(" ---- \n");
 /*
 		switch(nready)
 		{
@@ -245,6 +243,7 @@ int main(int argc, char **argv)
 					args->allset 	 = &allset;
 					threadnode->clientsock = &(clientfd[i]);
 
+				    printf("Number of Connections %d\n", conncounter++);
 					//printf("Starting Thread - %d\n", i);
 				    if(pthread_create(&(threadnode->thread), NULL, &tprocess, (void *)args) != 0) // !!!! FIX THREAD INIT !!!!
 				    {
@@ -279,7 +278,6 @@ int main(int argc, char **argv)
 				}
 	        }
 		}
-
 	}
 /* ---- Closing Tasks ---- */
 	// Close these by accepting the CRTL+C input and directing here

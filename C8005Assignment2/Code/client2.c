@@ -17,7 +17,7 @@
 --	PROGRAMMERS:	Connor Phalen and Greg Little
 --
 --	NOTES:
---	Compile using this -> gcc -Wall -o clnt client.c
+--	Compile using this -> gcc -Wall -o client client2.c -lpthread
 ---------------------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <sys/time.h>
 #include <string.h>
 #include <ctype.h>
 #include <arpa/inet.h>
@@ -36,11 +37,11 @@
 #include <time.h>
 #include <pthread.h>
 
-
 #define SERVER_LISTEN_PORT 8080
+#define PERFFILE "client_perf.csv"
 #define BUFLEN 1024
-#define THREAD_INIT 1000000
-#define PROCMOD 4
+#define THREAD_INIT 1000000 // might not ned
+#define PROCMOD 4 // Adjusts spacing between sends, higher numbers is higher delay
 
 struct targs{
     char* host;
@@ -49,19 +50,25 @@ struct targs{
 
 
 int connectionWorker (char* host, char* work);
-int send_amount = 3; // The higher the number, the more overlap between sleep sections
+double secdelay(struct timeval *start, struct timeval *end);
+
+int send_amount = PROCMOD; // The higher the number, the more overlap between sleep sections, can be local if we delete thread function
+pthread_mutex_t *filelock; // Global mutex for file locking
 
 // Program Start
 int main(int argc, char **argv)
 {
     int number_client = 1;
     //int waitTime = 50;
-    pid_t kids[THREAD_INIT];
-    int count =0;
+    pid_t kids[THREAD_INIT]; // might not need
+    int count = 0;
     char  *host;
     char  *work;
 
     //pthread_t threads[THREAD_INIT];//make linked list
+    FILE *filewriter;
+    char writebuf[BUFLEN];
+    struct timeval tstart, tcheck;
 
     //worker
     int socket_desc;
@@ -70,9 +77,6 @@ int main(int argc, char **argv)
     int waitTime =  2, bytes_to_read, n;
     char *bp;
     //eventWorker
-
-    //	FILE *filereader; // File Descriptors for saving performance
-    //	FILE *filewriter;  // for later implementation
 
 	switch(argc)
 	{
@@ -110,6 +114,15 @@ int main(int argc, char **argv)
         work[strlen(work)-1] = '\0';
     }
 
+    filelock = calloc(1, sizeof(pthread_mutex_t));
+
+    if(pthread_mutex_init(*(&filelock), NULL) != 0)
+    {
+        perror("Error initializing thread mutex");
+        exit(1);
+    }
+    gettimeofday(&tstart, NULL);
+
     pid_t forker;
     //struct targs args = (struct targs){host,work};
     /*do{
@@ -129,8 +142,11 @@ int main(int argc, char **argv)
         count--;
         //abort();
       }else*/ if((forker = fork()) == 0){
+        //printf("client: %d\n",i);
           //connectionWorker(host, work);
           break;
+        }else if(forker<0){
+            i--;
         }
     }
 
@@ -169,24 +185,9 @@ int main(int argc, char **argv)
     // mod the id, and sleep based on that amount, helps seperate sends and stuff
     usleep((getpid() % PROCMOD) * (PROCMOD * PROCMOD)); // might want to adjsut to get more sends later than evenly as is now
 
-/*Del-l8r*/switch(getpid() % PROCMOD) // wait for a small amount of time to better simulate random connections
-    {
-        case (0):
-            printf("PID Special 0 %d\n", getpid());
-            break;
-        case (1):
-            printf("PID Special 1 %d\n", getpid());
-            break;
-        case (2):
-            printf("PID Special 2 %d\n", getpid());
-            break;
-        default:
-            printf("PID %d\n", getpid());
-            break;
-    }
-
     for(int i=0; i<send_amount; i++){
         time_t timer = time(0) + waitTime;
+        /*
         if(strcmp(work,"f")==0){
             char message[5] = {"\0"};
             strcat(message,"x.txt");
@@ -195,13 +196,30 @@ int main(int argc, char **argv)
             FILE *send_txt = fopen(message,"r");
             fgets(send_buf,BUFLEN,send_txt);
             fclose (send_txt);
-        }else{
+        }else{*/
             strcpy(send_buf,work);
-        }
+        //}
 
     //  printf("S:%s\n",send_buf);
     send(socket_desc, send_buf, BUFLEN, 0);
 
+/* MUTEX DOESNT WORK, NEED SOME OTHER THING TO SYNC
+    pthread_mutex_lock(*(&filelock)); // might work, might not. Lets find out
+
+    if((filewriter = fopen(PERFFILE, "a"))) // open up client file to append data
+   {
+        perror("Failed to open file");
+        exit(1);
+    }
+    gettimeofday(&tcheck, NULL);
+
+    printf("Time Stuff - %.2f & ", (secdelay(&tstart, &tcheck)));
+    sprintf(writebuf, " %.2f ,", secdelay(&tstart, &tcheck));
+    fwrite(writebuf, sizeof(writebuf), 1, filewriter);
+    fclose(filewriter);
+
+    pthread_mutex_unlock(*(&filelock));
+*/
     bp = recieve_buf;
     bytes_to_read = BUFLEN;
 
@@ -244,14 +262,16 @@ int main(int argc, char **argv)
     }*/
     int status = 0;
     //for(int i=0; i<number_client;i++){
-      if(forker!=0){
-        printf("hello");
+      if(forker==0){
+        //printf("hello");
+        exit(0);
         while((forker=wait(&status))>0); // will make only main process wait for X time, could make signal based instead
       }
     //}
   //  time_t timer = time(0) + waitTime;
   //  while(time(0) < timer); // compiler is being a child about this cant use ;
     printf("its over\n");
+    free(filelock);
 	return(0);
 }
 
@@ -299,7 +319,7 @@ int connectionWorker (char* host, char* work){
     //printf("Send a Message to the server: \n");
     }
 
-        for(int i=0; i<3; i++){
+        for(int i=0; i<send_amount; i++){
             time_t timer = time(0) + waitTime;
             if(strcmp(work,"f")==0){
                 char message[5] = {"\0"};
@@ -340,4 +360,13 @@ int connectionWorker (char* host, char* work){
         close(socket_desc);
         //pthread_exit(0);
         return 0;
+}
+
+// Calculate difference between two points in time
+double secdelay(struct timeval *start, struct timeval *end)
+{
+    double timesum = (end->tv_sec - start->tv_sec) * 1000;  // seconds to milliseconds
+    timesum += (end->tv_usec - start->tv_usec) / 1000;   // microseconds to milliseconds
+
+    return (timesum / 1000); // return in seconds
 }
