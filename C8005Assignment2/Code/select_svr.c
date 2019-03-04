@@ -41,8 +41,9 @@
 
 #define SERVER_PORT 8080
 #define BUFLEN 1024
-#define LISTEN_QUOTA 500
+#define LISTEN_QUOTA 400
 #define THREAD_TIMEOUT 3
+#define BASIC_WAIT 20
 #define FD_SETSIZE2 1024 // Adjust based on real-world testing
 #define PERFFILE "select_server_perf.csv\0"
 #define PERFFILE2 "select_server_thread_data.csv\0"
@@ -51,6 +52,7 @@
 /* ---- Function Prototypes ---- */
 void* tprocess(void *arguments);
 void sigHandler(int sigNum);
+void closeProc(int sigNum);
 double delay(struct timeval *start, struct timeval *end);
 
 struct targs{
@@ -78,6 +80,7 @@ int main(int argc, char **argv)
 	struct sockaddr_in server, client;
 
 	struct tnode *head, *tail, *dnode; // pointers to the head and tail nodes
+	pid_t forked;
 
    	fd_set readset, allset; // Select variables for file descriptors
 	FILE *twriter; // For exporting performance data
@@ -112,9 +115,6 @@ int main(int argc, char **argv)
     	perror("setsockopt(SO_REUSEADDR) failed");
 	}
 
-	signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE errors, will handle the errors when they happen
-	signal(SIGINT, sigHandler); // All Signal Interputs get pushed to sigintHandler
-
 	// Zero out and create memory for the server struct
 	bzero((char *)&server, sizeof(struct sockaddr_in));
 	server.sin_family = AF_INET;
@@ -127,6 +127,47 @@ int main(int argc, char **argv)
 		perror("Cannot bind to socket");
 		exit(1);
 	}
+
+/* ---- Thread and TNode Cleanup ----  */
+	if((forked = fork()) == 0) // 0 in child, other value in parent
+	{
+		signal(SIGINT, closeProc); // Just to guarantee the forked proc is closed with Ctrl+C
+		while(true) // repeat, cycles through linked list for joinable threads
+		{
+			dnode = head;
+			while(dnode->next != NULL) // Go through whole linked list
+			{
+				// printf("smol check -----");
+				if(dnode->joinable == true)	
+				{
+					printf("Closing Thread #%ld\n", dnode->thread);
+					int result;
+					if((result = pthread_join(dnode->thread, NULL)) != 0)
+					{
+						printf("Error Joining Threads: %s\n", strerror(result));
+						exit(1);
+					}
+					FD_CLR(*(dnode->clientsock), &allset);
+					close(*(dnode->clientsock));
+
+					for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
+					{
+						if(clientfd[i] == *(dnode->clientsock))
+						{
+							clientfd[i] = -1;
+							break;
+						}
+					}
+					free(tnodepop(head, dnode));
+				}
+				dnode = dnode->next;
+			}
+		}
+		return 0; // will never get here, but might as well show it can end
+	}
+
+	signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE errors, will handle the errors when they happen
+	signal(SIGINT, sigHandler); // All Signal Interputs get pushed to sigintHandler
 
 /* ---- New Connection And Thread Setup ---- */
 	// Listen for Connections, limit to backlog of LISTEN_QUOTA requests
@@ -145,16 +186,19 @@ int main(int argc, char **argv)
    	if(pthread_mutex_init(&tlock, NULL) != 0)
    	{
    		perror("Error initializing thread mutex");
+		kill(forked, SIGKILL); // kill child
    		exit(1);
    	}
    	if(pthread_mutex_init(&filelock, NULL) != 0)
    	{
    		perror("Error initializing thread mutex");
+		kill(forked, SIGKILL); // kill child
    		exit(1);
    	}
    	if((filewriter = fopen(PERFFILE, "w+")) == NULL) // open up client file to append data
     {
         perror("Failed to open file");
+		kill(forked, SIGKILL); // kill child
         exit(1);
     }
     gettimeofday(&tstart, NULL);
@@ -201,6 +245,7 @@ int main(int argc, char **argv)
 			if((sockpoint = accept(socket_desc, (struct sockaddr *) &client, &client_len)) == -1)
 			{
 				perror("Error accepting new client");
+				kill(forked, SIGKILL); // kill child
 				exit(1);
 			}
 			// printf("New Client Address:  %s\n", inet_ntoa(client.sin_addr));
@@ -232,6 +277,7 @@ int main(int argc, char **argv)
 				    	if(errno == EAGAIN) // System Resources are strained
 				    	{
 				        	perror("Error Occured with Thread Creation");
+							kill(forked, SIGKILL); // kill child
 				        	exit(1);		    		
 				    	}
 				    }
@@ -245,6 +291,7 @@ int main(int argc, char **argv)
 				if(i == FD_SETSIZE2) // No empty space for new clients (1024 clients????)
 	         	{
 					printf("Too many clients\n\n\n");
+					kill(forked, SIGKILL); // kill Child
 	            	exit(1);
 	    		}
 
@@ -263,36 +310,6 @@ int main(int argc, char **argv)
 					continue;	      	
 				}
 	        }
-		}
-
-/* ---- Thread and TNode Cleanup ----  NOTE: This code goes into a forked process to help performance*/
-		dnode = head;
-		while(dnode->next != NULL) // Is there a faster way of finding the right node?
-		{
-			// printf("smol check -----");
-			if(dnode->joinable == true)	
-			{
-				printf("Closing Thread #%ld\n", dnode->thread);
-				int result;
-				if((result = pthread_join(dnode->thread, NULL)) != 0)
-				{
-					printf("Error Joining Threads: %s\n", strerror(result));
-					exit(1);
-				}
-				FD_CLR(*(dnode->clientsock), &allset);
-				close(*(dnode->clientsock));
-
-				for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
-				{
-					if(clientfd[i] == *(dnode->clientsock))
-					{
-						clientfd[i] = -1;
-						break;
-					}
-				}
-				free(tnodepop(head, dnode));
-			}
-			dnode = dnode->next;
 		}
 	}
 /* ---- Closing Tasks ---- */
@@ -389,14 +406,19 @@ void sigHandler(int sigNum)
 	{
 		case SIGINT:
 			signal(SIGINT, sigHandler); // reset in case later we do more stuff 
-			printf("Program Closing...\n");
-			fclose(filewriter); // close so it can properyl save the written data
+			printf("\nMain Program Closing...\n");
+			fclose(filewriter); // close so it can properly save the written data
 			exit(0);
-			// find a way to go back to main and handle things more, if we want
 			break;
 		default:
 			break;
 	}
+}
+
+void closeProc(int sigNum)
+{
+	printf("\nClosing Child Process...\n");
+	exit(0);
 }
 
 // Calculate difference between two points in time

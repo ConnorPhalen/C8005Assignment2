@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <pthread.h>
+#include <signal.h>
 
 #define SERVER_LISTEN_PORT 8080
 #define PERFFILE "client_perf.csv"
@@ -50,6 +51,7 @@ struct targs{
 
 
 int connectionWorker (char* host, char* work);
+void closeProc(int sigNum);
 double delay(struct timeval *start, struct timeval *end);
 
 int send_amount = PROCMOD; // The higher the number, the more overlap between sleep sections, can be local if we delete thread function
@@ -60,10 +62,10 @@ int main(int argc, char **argv)
 {
     int number_client = 1;
     //int waitTime = 50;
-    pid_t kids[THREAD_INIT]; // might not need
+    //pid_t kids[THREAD_INIT]; // might not need
     int count = 0;
     char  *host;
-    char  *work;
+    char  work[BUFLEN];
 
     //pthread_t threads[THREAD_INIT];//make linked list
     FILE *filewriter;
@@ -80,23 +82,17 @@ int main(int argc, char **argv)
 
 	switch(argc)
 	{
-        //case 3:   // to be used if we want to default to "p" switch
-          //  break;
+        case 3:
+            host = argv[1];
+            number_client = strtol(argv[2],NULL,10);
+            break;
         case 4:
             host = argv[1];
             number_client = strtol(argv[2],NULL,10);
-            work = argv[3];
-            break;
-        case 5:
-            host = argv[1];
-            number_client = strtol(argv[2],NULL,10);
-            work = argv[3];
-            send_amount = strtol(argv[4],NULL,10);
+            send_amount = strtol(argv[3],NULL,10);
             break;
 		default:
-			//fprintf(stderr, "Usage: %s Enter a host ip, then number of clients, then 'f' for file transfer, or 'p' for input paragraph send\n", argv[0]);
-            fprintf(stderr, "Usage: %s [hostip] [number of clients] [f/p] (Optional Flags: [times to send])\n", argv[0]);
-            fprintf(stderr, "Note: [f] stands for file transfer, while [p] stands for paragraph send\n");
+			fprintf(stderr, "Usage: %s [hostip] [number of clients] (Optional Flags: [times to send])\n", argv[0]);
             exit(1);
 	}
 
@@ -108,11 +104,11 @@ int main(int argc, char **argv)
     printf("num: %d\n",number_client);
 	// Create new socket;
     //sending socket_desc to thread
-    if(strcmp(work,"p")==0){
-        printf("enter text to send: ");
-        fgets(work,BUFLEN,stdin);
-        work[strlen(work)-1] = '\0';
-    }
+    //if(strcmp(work,"p")==0){
+    printf("enter text to send: ");
+    fgets(work,BUFLEN,stdin);
+    work[strlen(work)-1] = '\0';
+    //}
 
     filelock = calloc(1, sizeof(pthread_mutex_t));
 
@@ -129,6 +125,8 @@ int main(int argc, char **argv)
         exit(1);
     }
     fclose(filewriter);
+
+    signal(SIGINT, closeProc); // Just to guarantee the forked proc is closed with Ctrl+C
 
     pid_t forker;
     //struct targs args = (struct targs){host,work};
@@ -221,10 +219,10 @@ int main(int argc, char **argv)
     gettimeofday(&tcheck, NULL);
 
     double delayed = delay(&tstart, &tcheck);
-    printf("Time Stuff - %.2f & ", (delayed));
+    printf("Time Stuff - %.0f & ", (delayed));
     //snprintf(writebuf, sizeof(delayed)," %.2f ,", delayed);
 
-    fprintf(filewriter," %.2f ,", delayed);
+    fprintf(filewriter," %.0f ,", delayed);
 
     //fwrite(testbuf, sizeof(char), (strlen(testbuf) * sizeof(char)), filewriter);
     fclose(filewriter);
@@ -287,7 +285,7 @@ int main(int argc, char **argv)
 	return(0);
 }
 
-
+/*
 int connectionWorker (char* host, char* work){
   //  char  **pptr;
 //	  char str[16];
@@ -373,6 +371,7 @@ int connectionWorker (char* host, char* work){
         //pthread_exit(0);
         return 0;
 }
+*/
 
 // Calculate difference between two points in time
 double delay(struct timeval *start, struct timeval *end)
@@ -381,4 +380,10 @@ double delay(struct timeval *start, struct timeval *end)
     timesum += (end->tv_usec - start->tv_usec) / 1000;   // microseconds to milliseconds
 
     return (timesum); // return in seconds
+}
+
+void closeProc(int sigNum)
+{
+    printf("Closing Process...\n");
+    exit(0);
 }
