@@ -31,7 +31,6 @@
 #include <strings.h>
 #include <string.h>
 #include <arpa/inet.h>
-#include <sys/mman.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -59,8 +58,6 @@ struct targs{
 	int *clientsock;
 	struct tnode *nodehold;
 	FILE *twriter;
-	struct timeval *tstart;
-	struct timeval *tcheck;
 	fd_set *readset;
 	fd_set *allset;
 };
@@ -69,10 +66,8 @@ pthread_mutex_t tlock;  // Global mutex for threads
 //pthread_mutex_t memlock; // Global mutex for memory creation
 pthread_mutex_t filelock; // Global mutex for file locking
 FILE *filewriter;
-int byte_sum;
-// MMAP Test Variables
-//fd_set *readsetPT, *allsetPT; // Select variables for file descriptors
-//int *clientfdPT;
+fd_set readset, allset; // Select variables for file descriptors
+int clientfd[FD_SETSIZE2];
 
 // Program Start
 int main(int argc, char **argv)
@@ -82,28 +77,16 @@ int main(int argc, char **argv)
 	int socket_desc, client_len; 	// Socket specific
 	int sockpoint;
 	int maxfd;			// Select specific
-	//double dtime, byte_sum;
+	double dtime;
 	struct sockaddr_in server, client;
+
 	struct tnode *head, *tail, *dnode; // pointers to the head and tail nodes
-
-	fd_set readset, allset; // Select variables for file descriptors
-	int clientfd[FD_SETSIZE2];
-
 	pid_t forked;
 
 	FILE *twriter; // For exporting performance data
 
 	struct timeval timeout = (struct timeval){ 1 };	// timeout of 1 second
 	struct timeval tstart, tcheck;
-
-/* MMAP TESTING /
-	head = mmap(NULL, sizeof *head, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	clientfdPT = mmap(NULL, sizeof *clientfdPT, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-	allsetPT = mmap(NULL, sizeof *allsetPT, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-	clientfdPT = &clientfd;
-	allsetPT = &allset;
-MMAP Testing End */
 
 /* ---- Variable Testing  ---- */
 	// init memory for node, malloc might be faster, but am worried about its "optimistic memory allocation" (see notes)
@@ -145,7 +128,7 @@ MMAP Testing End */
 		exit(1);
 	}
 
-/* ---- Thread and TNode Cleanup PROTOTYPE ---- head, allset, clientfd need to be accessable /
+/* ---- Thread and TNode CLeanup Fork PROTOTYPE ----*/  
 	if((forked = fork()) == 0) // 0 in child, other value in parent
 	{
 		signal(SIGINT, closeProc); // Just to guarantee the forked proc is closed with Ctrl+C
@@ -154,6 +137,8 @@ MMAP Testing End */
 			dnode = head;
 			while(dnode->next != NULL) // Go through whole linked list
 			{
+				printf("Forked Proc Socket- %d\n", *(dnode->clientsock));
+				// printf("smol check -----");
 				if(dnode->joinable == true)	
 				{
 					printf("Closing Thread #%ld\n", dnode->thread);
@@ -163,14 +148,14 @@ MMAP Testing End */
 						printf("Error Joining Threads: %s\n", strerror(result));
 						exit(1);
 					}
-					FD_CLR(*(dnode->clientsock), *(&allsetPT));
+					FD_CLR(*(dnode->clientsock), &allset);
 					close(*(dnode->clientsock));
 
 					for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
 					{
-						if(clientfdPT[i] == *(dnode->clientsock))
+						if(clientfd[i] == *(dnode->clientsock))
 						{
-							clientfdPT[i] = -1;
+							clientfd[i] = -1;
 							break;
 						}
 					}
@@ -181,7 +166,8 @@ MMAP Testing End */
 		}
 		return 0; // will never get here, but might as well show it can end
 	}
-//PROTOTYPE ENDS HERE*/
+//PROTOTYPE ENDS HERE	*/
+
 	signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE errors, will handle the errors when they happen
 	signal(SIGINT, sigHandler); // All Signal Interputs get pushed to sigintHandler
 
@@ -202,22 +188,21 @@ MMAP Testing End */
    	if(pthread_mutex_init(&tlock, NULL) != 0)
    	{
    		perror("Error initializing thread mutex");
-		//kill(forked, SIGKILL); // kill child
+		kill(forked, SIGKILL); // kill child
    		exit(1);
    	}
    	if(pthread_mutex_init(&filelock, NULL) != 0)
    	{
    		perror("Error initializing thread mutex");
-		//kill(forked, SIGKILL); // kill child
+		kill(forked, SIGKILL); // kill child
    		exit(1);
    	}
-   	if((twriter = fopen(PERFFILE2, "w+")) == NULL) // open up client file to append data
+   	if((filewriter = fopen(PERFFILE, "w+")) == NULL) // open up client file to append data
     {
         perror("Failed to open file");
-		//kill(forked, SIGKILL); // kill child
+		kill(forked, SIGKILL); // kill child
         exit(1);
     }
-    fclose(twriter);
     gettimeofday(&tstart, NULL);
 
    	/*
@@ -262,7 +247,7 @@ MMAP Testing End */
 			if((sockpoint = accept(socket_desc, (struct sockaddr *) &client, &client_len)) == -1)
 			{
 				perror("Error accepting new client");
-				//kill(forked, SIGKILL); // kill child
+				kill(forked, SIGKILL); // kill child
 				exit(1);
 			}
 			// printf("New Client Address:  %s\n", inet_ntoa(client.sin_addr));
@@ -279,16 +264,14 @@ MMAP Testing End */
 					// struct targs args = (struct targs){&(clientfd[i]), threadnode, &readset, &allset}; // worried about memory leaking from this once thread closes
 					args->clientsock = &(clientfd[i]);
 					args->nodehold 	 = threadnode;
-					args->twriter 	 = twriter;
-					args->tstart 	 = &tstart;
-					args->tcheck 	 = &tcheck;
+					args->twriter = twriter;
 					args->readset 	 = &readset;
 					args->allset 	 = &allset;
 					threadnode->clientsock = &(clientfd[i]);
 
 				    printf("Number of Connections %d\n", ++conncounter);
-				    //gettimeofday(&tcheck, NULL);
-				    //dtime = delay(&tstart, &tcheck);
+				    gettimeofday(&tcheck, NULL);
+				    dtime = delay(&tstart, &tcheck);
 
 					//printf("Starting Thread - %d\n", i);
 				    if(pthread_create(&(threadnode->thread), NULL, &tprocess, (void *)args) != 0) // !!!! FIX THREAD INIT !!!!
@@ -296,21 +279,21 @@ MMAP Testing End */
 				    	if(errno == EAGAIN) // System Resources are strained
 				    	{
 				        	perror("Error Occured with Thread Creation");
-							//kill(forked, SIGKILL); // kill child
+							kill(forked, SIGKILL); // kill child
 				        	exit(1);		    		
 				    	}
 				    }
 				    tail = tnodepush(tail, threadnode); // Push new thread into linked list
-				    //byte_sum += BUFLEN * 4;
-				    //fprintf(filewriter, "%s,%.2f,%.0f\n", inet_ntoa(client.sin_addr), dtime, byte_sum);
-				    //fprintf(filewriter, "%.2f,%.0f\n", dtime, byte_sum);
-				    
+
+				    fprintf(filewriter, "%s | %.2f,\n", inet_ntoa(client.sin_addr), dtime);
+				    //fwrite(inet_ntoa(client.sin_addr), sizeof(inet_ntoa(client.sin_addr)), 1, filewriter);
+
 					break;
 	            }
 				if(i == FD_SETSIZE2) // No empty space for new clients (1024 clients????)
 	         	{
 					printf("Too many clients\n\n\n");
-					//kill(forked, SIGKILL); // kill Child
+					kill(forked, SIGKILL); // kill Child
 	            	exit(1);
 	    		}
 
@@ -329,34 +312,6 @@ MMAP Testing End */
 					continue;	      	
 				}
 	        }
-		}
-/* Thread Cleanup Without Forked Process */
-		dnode = head;
-		while(dnode->next != NULL) // Go through whole linked list
-		{
-			if(dnode->joinable == true)	
-			{
-				printf("Closing Thread #%ld\n", dnode->thread);
-				int result;
-				if((result = pthread_join(dnode->thread, NULL)) != 0)
-				{
-					printf("Error Joining Threads: %s\n", strerror(result));
-					exit(1);
-				}
-				FD_CLR(*(dnode->clientsock), &allset);
-				close(*(dnode->clientsock));
-
-				for(i = 0; i < FD_SETSIZE2; i++) // reset clientfd spot for this socket
-				{
-					if(clientfd[i] == *(dnode->clientsock))
-					{
-						clientfd[i] = -1;
-						break;
-					}
-				}
-				free(tnodepop(head, dnode));
-			}
-			dnode = dnode->next;
 		}
 	}
 /* ---- Closing Tasks ---- */
@@ -403,14 +358,13 @@ void* tprocess(void *arguments)
 			{
 				bp += n;
 				bytes_to_read -= n;
-				byte_sum += BUFLEN;// race condition?
 
 				if(n == 0)
 				{
 					break; // no more bytes to read
 				}
 			}
-			//pthread_mutex_lock(&tlock); // might not need here as there doesnt seem to be a race condition possibility
+			pthread_mutex_lock(&tlock); // might not need here as there doesnt seem to be a race condition possibility
 			if(write(*(targs->clientsock), buf, BUFLEN) == -1)   // echo to client
 			{
 				if(errno == EPIPE) // If Peer end was broken
@@ -422,7 +376,7 @@ void* tprocess(void *arguments)
 				printf("THREAD - %ld\nSOCKET - %d\n", pthread_self(), *(targs->clientsock));
 				exit(1);
 			}
-			//pthread_mutex_unlock(&tlock);
+			pthread_mutex_unlock(&tlock);
 			//gettimeofday(&ttimeout_old, NULL); // active connection, so update ttimeout_old
 		}
 
@@ -435,15 +389,6 @@ void* tprocess(void *arguments)
 	    }
 	}
 	pthread_mutex_lock(&tlock);
-	if((targs->twriter = fopen(PERFFILE2, "a")) == NULL) // open up client file to append data
-    {
-        perror("Failed to open file");
-        exit(1);
-    }
-    gettimeofday(targs->tcheck, NULL);
-	fprintf(targs->twriter, "%.2f,%d\n", delay(targs->tstart, targs->tcheck), byte_sum);
-	fclose(targs->twriter);
-
 	//printf("Thread #%ld: Client done, closing thread...\n", pthread_self());
 	FD_CLR(*(targs->clientsock), allset); // move to cleanup section????
 
@@ -461,7 +406,7 @@ void sigHandler(int sigNum)
 		case SIGINT:
 			signal(SIGINT, sigHandler); // reset in case later we do more stuff 
 			printf("\nMain Program Closing...\n");
-			//fclose(filewriter); // close so it can properly save the written data
+			fclose(filewriter); // close so it can properly save the written data
 			exit(0);
 			break;
 		default:
@@ -481,5 +426,5 @@ double delay(struct timeval *start, struct timeval *end)
     double timesum = (end->tv_sec - start->tv_sec) * 1000;  // seconds to milliseconds
     timesum += (end->tv_usec - start->tv_usec) / 1000;   // microseconds to milliseconds
 
-    return (timesum / 1000); // return in seconds
+    return (timesum); // return in seconds
 }
