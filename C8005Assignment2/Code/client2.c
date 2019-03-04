@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 
     //pthread_t threads[THREAD_INIT];//make linked list
     FILE *filewriter;
-    char writebuf[BUFLEN];
+    char *writebuf[12];
     struct timeval tstart, tcheck;
 
     //worker
@@ -122,6 +122,13 @@ int main(int argc, char **argv)
         exit(1);
     }
     gettimeofday(&tstart, NULL);
+
+    if((filewriter = fopen(PERFFILE, "w+")) == NULL) //clear old file if it exists, will get appened to later
+    {
+        perror("Failed to open file");
+        exit(1);
+    }
+    fclose(filewriter);
 
     pid_t forker;
     //struct targs args = (struct targs){host,work};
@@ -203,11 +210,11 @@ int main(int argc, char **argv)
     //  printf("S:%s\n",send_buf);
     send(socket_desc, send_buf, BUFLEN, 0);
 
-/* MUTEX DOESNT WORK, NEED SOME OTHER THING TO SYNC
+/* MUTEX DOESNT WORK, NEED SOME OTHER THING TO SYNC */
     pthread_mutex_lock(*(&filelock)); // might work, might not. Lets find out
 
-    if((filewriter = fopen(PERFFILE, "a"))) // open up client file to append data
-   {
+    if((filewriter = fopen(PERFFILE, "a")) == NULL) // open up client file to append data
+    {
         perror("Failed to open file");
         exit(1);
     }
@@ -215,11 +222,11 @@ int main(int argc, char **argv)
 
     printf("Time Stuff - %.2f & ", (secdelay(&tstart, &tcheck)));
     sprintf(writebuf, " %.2f ,", secdelay(&tstart, &tcheck));
-    fwrite(writebuf, sizeof(writebuf), 1, filewriter);
+    fwrite(writebuf, 1, sizeof(writebuf), filewriter);
     fclose(filewriter);
 
     pthread_mutex_unlock(*(&filelock));
-*/
+//
     bp = recieve_buf;
     bytes_to_read = BUFLEN;
 
